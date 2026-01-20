@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Absensi Siswa</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<style>
+body{margin:0;font-family:Arial;background:#0f1225;color:white}
+.box{max-width:1200px;margin:auto;padding:15px;background:#161a3a;border-radius:12px;margin-top:10px}
+.hidden{display:none}
+input,select,button{width:100%;padding:8px;margin:5px 0;border-radius:8px;border:none}
+button{background:#6c5ce7;color:white;font-weight:bold}
+h1,h2,h3{text-align:center}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border:1px solid #333;padding:5px;text-align:center}
+th{background:#1f2455}
+.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:10px 0}
+.calendar div{background:#1f2455;padding:8px;border-radius:6px;text-align:center;cursor:pointer}
+.active{background:#00cec9;color:black;font-weight:bold}
+.note{background:#1f2455;padding:10px;border-radius:8px;margin-top:10px}
+#saveBtn{
+ position:fixed;right:15px;bottom:15px;
+ padding:14px 18px;border-radius:50px;
+ background:#00cec9;color:black;font-weight:bold;
+ border:none;
+}
+</style>
+</head>
+<body>
+
+<div class="box" id="loginBox">
+<h2>🔐 Login Guru</h2>
+<input id="user" placeholder="Username">
+<input id="pass" type="password">
+<button onclick="login()">Login</button>
+</div>
+
+<div class="box hidden" id="setupBox">
+<h2>📥 Upload Data Siswa (Excel)</h2>
+<input type="file" id="excel" accept=".xlsx">
+<button onclick="simpanMaster()">Simpan</button>
+<button onclick="resetData()">🔄 Ganti Data</button>
+</div>
+
+<div class="box hidden" id="app">
+<h2 id="judul"></h2>
+<div class="calendar" id="calendar"></div>
+
+<select id="kelas" onchange="render()"></select>
+
+<table>
+<thead>
+<tr>
+<th>Nama</th><th>Absensi</th>
+<th>T1</th><th>T2</th><th>T3</th><th>T4</th><th>T5</th><th>T6</th>
+<th>Rata</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+
+<div class="note">
+<h3>📌 Siswa Tidak Hadir</h3>
+<div id="catatan"></div>
+</div>
+
+<h3>📊 Rekap Bulanan</h3>
+<input type="month" id="bulan" onchange="rekap()">
+<button onclick="exportAll()">📥 Semua</button>
+<button onclick="exportKelas()">🏫 Kelas</button>
+<button onclick="exportSiswa()">👤 Siswa</button>
+
+<table>
+<thead>
+<tr><th>Kelas</th><th>Hadir</th><th>Izin</th><th>Alpa</th></tr>
+</thead>
+<tbody id="rekap"></tbody>
+</table>
+</div>
+
+<button id="saveBtn" onclick="simpanHarian()">💾 Simpan</button>
+
+<script>
+let master=[],data=[],rekapData=[];
+let tanggal=new Date().toISOString().split("T")[0];
+
+window.onload=()=>{
+ let m=localStorage.getItem("master");
+ if(m){
+  master=JSON.parse(m);
+  loginBox.classList.add("hidden");
+  app.classList.remove("hidden");
+  init();
+ }
+};
+
+function login(){
+ if(user.value==="admin"&&pass.value==="12345"){
+  loginBox.classList.add("hidden");
+  if(localStorage.getItem("master")){
+   app.classList.remove("hidden");init();
+  }else setupBox.classList.remove("hidden");
+ }else alert("Login salah");
+}
+
+excel.onchange=e=>{
+ let r=new FileReader();
+ r.onload=ev=>{
+  let wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array"});
+  let rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+  rows.shift();
+  master=rows.filter(r=>r[0]&&r[1]).map(r=>({
+   nama:String(r[0]).trim(),
+   kelas:String(r[1]).trim()
+  }));
+ };
+ r.readAsArrayBuffer(e.target.files[0]);
+};
+
+function simpanMaster(){
+ if(!master.length)return alert("Data kosong");
+ localStorage.setItem("master",JSON.stringify(master));
+ setupBox.classList.add("hidden");
+ app.classList.remove("hidden");
+ init();
+}
+
+function resetData(){
+ if(confirm("Hapus semua data?")){
+  localStorage.clear();location.reload();
+ }
+}
+
+function key(t){return "absen_"+t}
+
+function init(){
+ judul.innerText="Tanggal: "+tanggal;
+ renderCalendar();
+ load();
+}
+
+function renderCalendar(){
+ calendar.innerHTML="";
+ let d=new Date(),y=d.getFullYear(),m=d.getMonth()+1;
+ let max=new Date(y,m,0).getDate();
+ for(let i=1;i<=max;i++){
+  let t=`${y}-${String(m).padStart(2,"0")}-${String(i).padStart(2,"0")}`;
+  calendar.innerHTML+=`<div class="${t===tanggal?'active':''}" onclick="pilih('${t}')">${i}</div>`;
+ }
+}
+
+function pilih(t){
+ tanggal=t;
+ judul.innerText="Tanggal: "+tanggal;
+ load();
+}
+
+function load(){
+ let saved=JSON.parse(localStorage.getItem(key(tanggal)));
+ data=saved||master.map(s=>({
+  nama:s.nama,kelas:s.kelas,absensi:"Hadir",t:[0,0,0,0,0,0]
+ }));
+ kelas.innerHTML='<option value="">Pilih Kelas</option>';
+ [...new Set(master.map(s=>s.kelas))].forEach(k=>kelas.innerHTML+=`<option>${k}</option>`);
+ render();
+}
+
+function render(){
+ tbody.innerHTML="";let cat=[];
+ data.filter(s=>!kelas.value||s.kelas===kelas.value).forEach((s,i)=>{
+  if(s.absensi!=="Hadir")cat.push(`${s.nama} (${s.absensi})`);
+  let r=s.t.reduce((a,b)=>a+b)/6;
+  tbody.innerHTML+=`
+<tr>
+<td>${s.nama}</td>
+<td>
+<select onchange="data[${i}].absensi=this.value;render()">
+<option ${s.absensi==="Hadir"?"selected":""}>Hadir</option>
+<option ${s.absensi==="Izin"?"selected":""}>Izin</option>
+<option ${s.absensi==="Alpa"?"selected":""}>Alpa</option>
+</select>
+</td>
+${s.t.map((v,j)=>`<td><input type="number" value="${v}" oninput="s.t[${j}]=+this.value||0"></td>`).join("")}
+<td>${r.toFixed(1)}</td>
+</tr>`;
+ });
+ catatan.innerHTML=cat.join("<br>")||"✅ Semua hadir";
+}
+
+function simpanHarian(){
+ localStorage.setItem(key(tanggal),JSON.stringify(data));
+ alert("Tersimpan");
+}
+
+function rekap(){
+ rekap.innerHTML="";rekapData=[];
+ let b=bulan.value;if(!b)return;
+ Object.keys(localStorage).filter(k=>k.startsWith("absen_")&&k.includes(b))
+ .forEach(k=>{
+  JSON.parse(localStorage.getItem(k)).forEach(s=>{
+   let o=rekapData.find(x=>x.kelas===s.kelas);
+   if(!o){o={kelas:s.kelas,H:0,I:0,A:0};rekapData.push(o);}
+   if(s.absensi==="Hadir")o.H++;
+   if(s.absensi==="Izin")o.I++;
+   if(s.absensi==="Alpa")o.A++;
+  });
+ });
+ rekapData.forEach(o=>{
+  rekap.innerHTML+=`<tr><td>${o.kelas}</td><td>${o.H}</td><td>${o.I}</td><td>${o.A}</td></tr>`;
+ });
+}
+
+function exportAll(){
+ let ws=XLSX.utils.json_to_sheet(rekapData);
+ let wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,ws,"Rekap");
+ XLSX.writeFile(wb,"Rekap_Semua.xlsx");
+}
+
+function exportKelas(){
+ if(!kelas.value)return alert("Pilih kelas");
+ let ws=XLSX.utils.json_to_sheet(rekapData.filter(x=>x.kelas===kelas.value));
+ let wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,ws,"Kelas");
+ XLSX.writeFile(wb,"Rekap_"+kelas.value+".xlsx");
+}
+
+function exportSiswa(){
+ if(!bulan.value)return alert("Pilih bulan dulu");
+ let s={};
+ Object.keys(localStorage).filter(k=>k.startsWith("absen_")&&k.includes(bulan.value))
+ .forEach(k=>{
+  JSON.parse(localStorage.getItem(k)).forEach(x=>{
+   let o=s[x.nama]||(s[x.nama]={Nama:x.nama,Kelas:x.kelas,Hadir:0,Izin:0,Alpa:0});
+   if(x.absensi==="Hadir")o.Hadir++;
+   if(x.absensi==="Izin")o.Izin++;
+   if(x.absensi==="Alpa")o.Alpa++;
+  });
+ });
+ let ws=XLSX.utils.json_to_sheet(Object.values(s));
+ let wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,ws,"Siswa");
+ XLSX.writeFile(wb,"Rekap_Siswa.xlsx");
+}
+</script>
+</body>
+</html>
